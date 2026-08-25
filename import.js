@@ -5,6 +5,130 @@
    workbook / JSON export, backup restore, and the extended
    (16-schedule) workbook export used by events.js.               */
 
+/* ============================================================
+   PHANTOM-ROW AUTO-REPAIR
+   Detects Excel workbooks whose sheets were bloated by a re-save
+   in desktop Excel (formatting applied to whole columns/rows
+   materialises 1,048,576 empty <row> elements). Strips the empty
+   rows and rewrites the <dimension> so the parser never sees the
+   defect. Runs entirely in memory — the user never has to open
+   the file in Excel to fix it.
+
+   This never calls ZipRead.entries() on a suspicious file: that
+   function refuses a phantom-row workbook outright (see core.js),
+   which is exactly the file this repair exists to fix. Instead it
+   re-reads the ZIP central and local directories itself the same
+   way ZipRead.entries() does, then decompresses each part with the
+   already-exposed ZipRead.text(), which carries no such guard.
+   ============================================================ */
+const PHANTOM_MAX_UNCOMPRESSED = 25 * 1024 * 1024;
+const PHANTOM_MAX_RATIO        = 12;
+
+function scanZipParts(buffer) {
+  const u8 = new Uint8Array(buffer), dv = new DataView(buffer);
+  let eocd = -1;
+  for (let i = u8.length - 22; i >= 0 && i > u8.length - 66000; i--) {
+    if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) return null;   // not a readable ZIP directory
+  let count = dv.getUint16(eocd + 10, true);
+  let off = dv.getUint32(eocd + 16, true);
+  if (count === 0xFFFF || off === 0xFFFFFFFF) {
+    for (let i = eocd - 20; i >= 0 && i > eocd - 4096; i--) {
+      if (dv.getUint32(i, true) === 0x07064b50) {
+        const z64 = Number(dv.getBigUint64(i + 8, true));
+        if (dv.getUint32(z64, true) === 0x06064b50) {
+          count = Number(dv.getBigUint64(z64 + 32, true));
+          off = Number(dv.getBigUint64(z64 + 48, true));
+        }
+        break;
+      }
+    }
+  }
+  const parts = [];
+  for (let i = 0; i < count; i++) {
+    if (off < 0 || off + 46 > u8.length) break;
+    if (dv.getUint32(off, true) !== 0x02014b50) break;
+    const method = dv.getUint16(off + 10, true);
+    const csize = dv.getUint32(off + 20, true);
+    const usize = dv.getUint32(off + 24, true);
+    const nlen = dv.getUint16(off + 28, true);
+    const elen = dv.getUint16(off + 30, true);
+    const clen = dv.getUint16(off + 32, true);
+    const lho = dv.getUint32(off + 42, true);
+    const name = new TextDecoder().decode(u8.subarray(off + 46, off + 46 + nlen));
+    if (lho + 30 <= u8.length) {
+      const lnl = dv.getUint16(lho + 26, true), lel = dv.getUint16(lho + 28, true);
+      const start = lho + 30 + lnl + lel;
+      const end = (csize > 0 && start + csize <= u8.length) ? start + csize : u8.length;
+      if (start < u8.length) parts.push({ name, method, csize, usize, data: u8.subarray(start, end) });
+    }
+    const step = 46 + nlen + elen + clen;
+    if (step <= 0) break;
+    off += step;
+  }
+  return parts;
+}
+
+async function repairPhantomRows(file) {
+  const ab = await file.arrayBuffer();
+  const parts = scanZipParts(ab);
+  if (!parts) return file;   // not a readable ZIP - let the normal parser report why
+
+  const suspicious = new Set(parts.filter(p =>
+    p.name.startsWith("xl/worksheets/sheet") && p.name.endsWith(".xml") &&
+    (p.usize > PHANTOM_MAX_UNCOMPRESSED || p.usize / Math.max(p.csize, 1) > PHANTOM_MAX_RATIO)
+  ));
+  if (!suspicious.size) return file;   // clean file, nothing to repair
+
+  const rebuilt = [];
+  for (const p of parts) {
+    /* Every part is decompressed and handed back to ZipWrite.build as raw
+       content, which re-compresses it itself — the writer has no "pass
+       through already-compressed bytes" path, so a part cannot be copied
+       across unchanged even when it did not need repair. */
+    const xml = await ZipRead.text({ method: p.method, data: p.data });
+    rebuilt.push({ name: p.name, data: suspicious.has(p) ? stripPhantomRows(xml) : xml });
+  }
+  return await ZipWrite.build(rebuilt, file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+}
+
+function stripPhantomRows(xml) {
+  // 1. Find the real used range by scanning for <row> elements that
+  //    actually contain at least one <c> (cell).
+  let maxRow = 0;
+  let maxCol = "";
+  const rowRe = /<row\b([^>]*)>([\s\S]*?)<\/row>|<row\b([^>]*)\/>/g;
+  let m;
+  while ((m = rowRe.exec(xml)) !== null) {
+    const attrs = m[1] || m[3] || "";
+    const body  = m[2] || "";
+    if (!/<c[\s>]/.test(body)) continue; // empty / phantom row
+    const rn = (attrs.match(/\br="(\d+)"/) || [])[1];
+    if (rn) maxRow = Math.max(maxRow, parseInt(rn, 10));
+    const cells = body.matchAll(/\br="([A-Z]+)\d+"/g);
+    for (const cm of cells) {
+      if (cm[1] > maxCol) maxCol = cm[1];
+    }
+  }
+
+  // 2. Remove every <row> that has no <c> children.
+  let repaired = xml.replace(
+    /<row\b[^>]*>\s*<\/row>|<row\b[^>]*\/>/g,
+    (full) => /<c[\s>]/.test(full) ? full : ""
+  );
+
+  // 3. Correct the <dimension> element so downstream code sees the
+  //    real used range instead of A1:AS1048576.
+  if (maxRow > 0 && maxCol) {
+    repaired = repaired.replace(
+      /<dimension\b[^>]*ref="[^"]*"[^>]*\/>/,
+      `<dimension ref="A1:${maxCol}${maxRow}"/>`
+    );
+  }
+  return repaired;
+}
+
 /* ============================================================== IMPORT
    Maps the bank's own core-banking extract columns (as used in
    "RBCCI Loan Report June 30 2026") onto the LPMRS account model.
@@ -179,6 +303,26 @@ function rowsToAccounts(headers, rows, source) {
 
 async function importFile(file) {
   const name = file.name, ext = name.split(".").pop().toLowerCase();
+
+  /* --- PHANTOM-ROW AUTO-REPAIR ---
+     If this is an .xlsx/.xlsm, scan the ZIP central directory and
+     transparently strip phantom empty rows before the parser ever
+     sees the file. This is what prevents the June-2026-style OOM
+     crash from recurring. */
+  if (ext === "xlsx" || ext === "xlsm") {
+    try {
+      file = await repairPhantomRows(file);
+    } catch (e) {
+      // Surface a clear, actionable message instead of a silent OOM kill
+      throw new Error(
+        "This workbook could not be auto-repaired: " + e.message +
+        " Open it in Excel, delete every empty row below your last " +
+        "data row and every empty column to the right of your last " +
+        "data column, then save a fresh copy and try again."
+      );
+    }
+  }
+
   const buf = await file.arrayBuffer();
   const hash = await sha256(buf);
   let sheets = [];
