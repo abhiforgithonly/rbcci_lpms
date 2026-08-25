@@ -8,7 +8,7 @@
    Single-file offline application. No external libraries, no CDN, no network.
    Reference: RBCCI LPMRS source document 05 Aug 2026 + ACL matrix instruction.
    ======================================================================== */
-const APP = { version: "1.13.0", ruleVersion: "2026.08.1", root: "rbcci-lpmrs" };
+const APP = { version: "1.13.1", ruleVersion: "2026.08.1", root: "rbcci-lpmrs" };
 /* Declared here, above every consumer, so the limits that stop a damaged file
    taking the page down are visible in one place rather than buried. */
 const INFLATE_DEADLINE_MS = 25000;   /* hard ceiling on decompressing one part */
