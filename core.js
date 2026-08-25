@@ -8,7 +8,7 @@
    Single-file offline application. No external libraries, no CDN, no network.
    Reference: RBCCI LPMRS source document 05 Aug 2026 + ACL matrix instruction.
    ======================================================================== */
-const APP = { version: "1.13.1", ruleVersion: "2026.08.1", root: "rbcci-lpmrs" };
+const APP = { version: "1.13.0", ruleVersion: "2026.08.1", root: "rbcci-lpmrs" };
 /* Declared here, above every consumer, so the limits that stop a damaged file
    taking the page down are visible in one place rather than buried. */
 const INFLATE_DEADLINE_MS = 25000;   /* hard ceiling on decompressing one part */
@@ -381,11 +381,36 @@ const ZipRead = (() => {
       if (dv.getUint32(off, true) !== 0x02014b50) break;
       const method = dv.getUint16(off + 10, true);
       const csize = dv.getUint32(off + 20, true);
+      const usize = dv.getUint32(off + 24, true);   // <-- ADDED: uncompressed size
       const nlen = dv.getUint16(off + 28, true);
       const elen = dv.getUint16(off + 30, true);
       const clen = dv.getUint16(off + 32, true);
       const lho = dv.getUint32(off + 42, true);
       const name = new TextDecoder().decode(u8.subarray(off + 46, off + 46 + nlen));
+      /* --- PHANTOM-ROW CIRCUIT BREAKER ---
+         Catches Excel files that were re-saved with formatting applied to
+         entire columns/rows. Those files declare 1,048,576 rows even when
+         only a few hundred carry data, and decompressing them blows the
+         browser's memory budget. We detect the defect from the ZIP central
+         directory (no decompression needed) and refuse the file early so
+         the import layer can offer a clear message. */
+      const PHANTOM_MAX_UNCOMPRESSED = 25 * 1024 * 1024;  // 25 MB per sheet part
+      const PHANTOM_MAX_RATIO        = 12;                // max 12:1 expansion
+      if (name.startsWith("xl/worksheets/sheet") && name.endsWith(".xml")) {
+        if (usize > PHANTOM_MAX_UNCOMPRESSED ||
+            usize / Math.max(csize, 1) > PHANTOM_MAX_RATIO) {
+          throw new Error(
+            `${name} expands to ${(usize/1048576).toFixed(1)} MB ` +
+            `(compressed ${csize} bytes). This is almost certainly a ` +
+            `"phantom used-range" caused by opening the file in Excel, ` +
+            `applying formatting to whole rows or columns, and re-saving. ` +
+            `The system will attempt to auto-repair it. If that fails, ` +
+            `open the file in Excel, delete every empty row below your ` +
+            `last data row and every empty column to the right of your ` +
+            `last data column, then save a fresh copy.`
+          );
+        }
+      }
       if (lho + 30 > u8.length) { off += 46 + nlen + elen + clen; continue; }
       const lnl = dv.getUint16(lho + 26, true), lel = dv.getUint16(lho + 28, true);
       const start = lho + 30 + lnl + lel;
