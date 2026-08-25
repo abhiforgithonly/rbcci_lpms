@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RBCCI LPMRS — Loan Portfolio Management and Reporting System</title>
+<meta name="theme-color" content="#0f3d2e">
+<link rel="stylesheet" href="styles.css">
+<link rel="manifest" href="manifest.webmanifest">
+</head>
+<body>
+<div class="loginwrap" id="loginScreen">
+  <form class="loginbox" id="loginForm">
+    <div class="brandmark" style="border:0;padding:0 0 16px"><div class="sq">RB</div><div><b>RBCCI LPMRS</b><span>Loan Portfolio Management &amp; Reporting</span></div></div>
+    <label class="f">Username<input id="loginUser" autocomplete="username" required></label>
+    <label class="f">Password<input id="loginPass" type="password" autocomplete="current-password" required></label>
+    <div class="bar" style="margin-top:6px"><button class="btn" type="submit" style="width:100%;justify-content:center">Log in</button></div>
+    <p class="mut sm" id="loginError" style="color:var(--bad);min-height:1.4em"></p>
+    <p class="mut sm" style="margin:0"><a href="#" id="forgotLink" style="color:var(--brand2);font-weight:600">Forgot your password?</a></p>
+    <p class="mut sm">First time here? Default administrator account is <b>admin</b> / <b>admin123</b> — you'll be asked to set a new password on first login. Add other Maker / Checker / Approver accounts from Administration afterward.</p>
+    <p class="mut sm">This login is a local accountability control recorded in the audit trail. It is not network authentication — the bank must still control the device and browser profile (see Administration).</p>
+    <p class="mut sm" id="loginVersion" style="text-align:center;margin:0"></p>
+  </form>
+</div>
+<div class="app" id="appShell">
+  <aside class="side">
+    <div class="brandmark"><div class="sq">RB</div><div><b>RBCCI LPMRS</b><span>Loan Portfolio Management &amp; Reporting</span></div></div>
+    <nav class="nav" id="nav"></nav>
+    <div class="sidefoot" id="sidefoot">Offline-first. All data stays in this browser profile.</div>
+  </aside>
+  <main class="main">
+    <header class="top">
+      <button class="btn ghost sm menu-btn" id="menuBtn">Menu</button>
+      <div class="ttl"><span id="topTitle">Dashboard</span><small id="topSub">—</small></div>
+      <div class="ctl"><label for="selYear">Year</label><select id="selYear"></select></div>
+      <div class="ctl"><label for="selView">View</label><select id="selView"><option value="M">Monthly</option><option value="Q">Quarterly</option><option value="A">Annual</option></select></div>
+      <div class="ctl"><label for="selPeriod">Period</label><select id="selPeriod"></select></div>
+      <div class="ctl"><label>Status</label><span id="lockTag" class="tag t-mute">DRAFT</span></div>
+      <div class="ctl" id="userBadge"><label>User</label><span></span></div>
+      <button class="btn sec sm" id="btnPrint">Print / PDF</button>
+      <button class="btn sm" id="btnXlsx">Export workbook</button>
+      <button class="btn ghost sm" id="btnLogout">Log out</button>
+    </header>
+    <div class="wrap" id="view"></div>
+  </main>
+</div>
+<div class="toast" id="toast"></div>
+<div class="modal" id="modal"><div class="sheet" id="modalBody"></div></div>
+<div class="drawer" id="drawer"></div>
+<script src="core.js"></script>
+<script src="letters.js"></script>
+<script src="rules.js"></script>
+<script src="engine.js"></script>
+<script src="afrd.js"></script>
+<script src="import.js"></script>
+<script src="views.js"></script>
+<script src="events.js"></script>
+<script src="pdf.js"></script>
+<script src="deploy.js"></script>
+</body>
+</html>

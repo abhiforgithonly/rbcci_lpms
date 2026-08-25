@@ -1,0 +1,148 @@
+:root{
+  --bg:#eef3f0; --surface:#fff; --surface2:#f7faf8; --ink:#12271f; --muted:#5d7169;
+  --line:#d5e1db; --brand:#0f3d2e; --brand2:#1f6047; --brand3:#2f7f61; --gold:#b8873a;
+  --ok:#1c6b48; --okbg:#e6f4ec; --warn:#8a5c0d; --warnbg:#fdf3dd; --bad:#9c2f2f; --badbg:#fbe9e9;
+  --info:#1d4e73; --infobg:#e8f1f8; --radius:10px; --shadow:0 10px 30px rgba(15,61,46,.08);
+  --mono:ui-monospace,"Cascadia Mono",Consolas,monospace;
+  --sans:"Inter","Segoe UI",system-ui,Arial,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--ink);font:15.5px/1.55 var(--sans)}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+button:disabled{opacity:.5;cursor:not-allowed}
+:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.hide{display:none!important}
+
+/* login */
+.loginwrap{display:none;min-height:100vh;place-items:center;background:var(--brand);padding:20px}
+.loginwrap.on{display:grid}
+.loginbox{background:#fff;border-radius:14px;padding:26px 28px;max-width:380px;width:100%;box-shadow:0 24px 60px rgba(0,0,0,.3);display:grid;gap:12px}
+.loginbox label.f{gap:6px}
+.loginbox input{padding:9px 10px}
+#appShell.hidden{display:none}
+
+/* shell */
+.app{display:grid;grid-template-columns:248px minmax(0,1fr);min-height:100vh}
+.side{position:sticky;top:0;height:100vh;overflow:auto;background:var(--brand);color:#e7f2ec;padding:14px 10px;display:flex;flex-direction:column;gap:10px}
+.brandmark{display:grid;grid-template-columns:38px 1fr;gap:10px;align-items:center;padding:4px 8px 12px;border-bottom:1px solid rgba(255,255,255,.14)}
+.brandmark .sq{width:38px;height:38px;border-radius:9px;background:linear-gradient(140deg,var(--gold),#e6c281);color:var(--brand);display:grid;place-items:center;font-weight:800;letter-spacing:.5px}
+.brandmark b{font-size:13px;display:block;line-height:1.2}
+.brandmark span{font-size:11px;color:#b9cec6;display:block;margin-top:3px}
+.nav{display:grid;gap:2px}
+.navgroup{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#93b0a5;margin:12px 10px 4px}
+.nav button{display:grid;grid-template-columns:22px 1fr auto;gap:8px;align-items:center;width:100%;text-align:left;background:transparent;border:0;color:#d6e6df;padding:8px 10px;border-radius:8px;font-size:13px}
+.nav button:hover{background:rgba(255,255,255,.08)}
+.nav button.on{background:var(--brand2);color:#fff;font-weight:600}
+.nav .k{font-size:9.5px;font-weight:800;background:rgba(255,255,255,.12);border-radius:5px;height:20px;display:grid;place-items:center}
+.nav .b{font-size:10px;font-weight:800;background:var(--gold);color:#2a1e06;border-radius:999px;padding:1px 6px}
+.nav .b.zero{background:rgba(255,255,255,.14);color:#cfe0d8}
+.sidefoot{margin-top:auto;font-size:11px;color:#a9c3b9;background:rgba(255,255,255,.07);padding:10px;border-radius:8px;line-height:1.45}
+
+.main{min-width:0;display:flex;flex-direction:column}
+.top{position:sticky;top:0;z-index:20;background:rgba(238,243,240,.93);backdrop-filter:blur(10px);border-bottom:1px solid var(--line);padding:10px 20px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+/* Knowing who's logged in, and being able to log out, should never be the
+   thing that silently wraps off-screen on a narrower window. Print and
+   Export are one click away again either way, so they're the ones that
+   give way first if the header runs out of room. */
+.top #userBadge{order:1}
+.top #btnLogout{order:2}
+.top #btnPrint{order:3}
+.top #btnXlsx{order:4}
+.top .ttl{font-weight:700;font-size:15px;margin-right:auto}
+.top .ttl small{display:block;font-weight:400;color:var(--muted);font-size:11.5px}
+.ctl{display:flex;gap:6px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:4px 8px;font-size:12px}
+.ctl label{color:var(--muted);font-size:11px}
+.ctl select,.ctl input{border:0;background:transparent;font-size:12px;font-weight:600;padding:2px}
+.wrap{padding:20px;max-width:1560px;width:100%;margin:0 auto}
+
+.btn{border:1px solid transparent;border-radius:8px;padding:8px 12px;font-size:12.5px;font-weight:600;background:var(--brand2);color:#fff;display:inline-flex;gap:6px;align-items:center}
+.btn:hover{filter:brightness(1.07)}
+.btn.sec{background:var(--surface);color:var(--brand);border-color:#bcd2c8}
+.btn.ghost{background:transparent;color:var(--ink);border-color:var(--line)}
+.btn.bad{background:var(--bad)}
+.btn.gold{background:var(--gold);color:#2a1e06}
+.btn.sm{padding:5px 9px;font-size:11.5px}
+
+h2.page{margin:0 0 4px;font-size:22px;letter-spacing:-.01em}
+p.lede{margin:0 0 16px;color:var(--muted);max-width:900px;font-size:13px}
+.bar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.grid{display:grid;gap:12px}
+.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.g4{grid-template-columns:repeat(4,minmax(0,1fr))}
+/* KPI decks are driven by a registry (DASH_KPIS), so the card count changes
+   whenever a metric is added. auto-fill keeps every row full and stops the
+   last card being orphaned alone on its own row, without anyone having to
+   keep the count a multiple of four. */
+.kpis{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(232px,1fr))}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:14px}
+.card h3{margin:0 0 10px;font-size:13.5px;letter-spacing:.01em}
+.card h3 .hint{font-weight:400;color:var(--muted);font-size:11.5px}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:13px;display:grid;gap:6px;align-content:start;cursor:pointer}
+.kpi:hover{border-color:var(--brand3)}
+.kpi .lab{font-size:11px;color:var(--muted);font-weight:600;letter-spacing:.02em}
+.kpi .val{font-size:24px;font-weight:750;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.kpi .sub{font-size:11.5px;color:var(--muted)}
+.kpi.warn{border-color:#e8cd94;background:#fffcf4}
+.kpi.bad{border-color:#e6b4b4;background:#fff8f8}
+.kpi.ok{border-color:#b6d9c4;background:#f6fcf8}
+
+.tw{border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);overflow:auto;max-height:640px}
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;white-space:nowrap}
+th{position:sticky;top:0;background:#eaf2ee;color:#28453a;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;z-index:1}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--mono);font-size:13px}
+tbody tr:hover{background:#f6fbf8;cursor:default}
+tr.tot td{font-weight:700;background:#f0f6f3}
+.tag{display:inline-block;padding:1.5px 7px;border-radius:999px;font-size:10.5px;font-weight:700;white-space:nowrap}
+.t-ok{background:var(--okbg);color:var(--ok)} .t-warn{background:var(--warnbg);color:var(--warn)}
+.t-bad{background:var(--badbg);color:var(--bad)} .t-info{background:var(--infobg);color:var(--info)}
+.t-mute{background:#eceff0;color:#546} 
+.note{border-left:4px solid var(--info);background:var(--infobg);padding:11px 13px;border-radius:8px;font-size:12.5px;margin:0 0 14px}
+.note.w{border-color:var(--warn);background:var(--warnbg)}
+.note.b{border-color:var(--bad);background:var(--badbg)}
+.note.g{border-color:var(--ok);background:var(--okbg)}
+.note b{display:block;margin-bottom:3px}
+label.f{display:grid;gap:5px;font-size:11px;color:var(--muted);font-weight:600}
+label.f input,label.f select,label.f textarea{border:1px solid var(--line);border-radius:7px;padding:7px 9px;background:#fff;font-weight:500;font-size:12.5px;width:100%}
+.frow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:12px}
+.drop{border:1.5px dashed #93b3a5;border-radius:var(--radius);background:#f7fcfa;padding:26px;text-align:center}
+.drop.over{border-color:var(--brand3);background:#eef8f3}
+.bars{display:grid;gap:8px}
+.brow{display:grid;grid-template-columns:150px 1fr 92px;gap:8px;align-items:center;font-size:11.5px}
+.track{height:8px;background:#e3ebe7;border-radius:99px;overflow:hidden}
+.track i{display:block;height:100%;background:var(--brand3)}
+.mono{font-family:var(--mono);font-size:13px}
+.mut{color:var(--muted)}
+.sm{font-size:13px}
+.tree{background:#0c2620;color:#cfe6dd;border-radius:9px;padding:14px;font:11.5px/1.5 var(--mono);white-space:pre;overflow:auto}
+.toast{position:fixed;right:16px;bottom:16px;z-index:80;background:#0c2620;color:#fff;padding:11px 14px;border-radius:9px;box-shadow:var(--shadow);font-size:12.5px;max-width:380px;opacity:0;transform:translateY(14px);transition:.18s;pointer-events:none}
+.toast.on{opacity:1;transform:none}
+.modal{position:fixed;inset:0;background:rgba(6,24,19,.72);display:none;place-items:center;z-index:90;padding:16px}
+.modal.on{display:grid}
+.sheet{background:#fff;border-radius:14px;padding:20px;max-width:640px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 24px 60px rgba(0,0,0,.3)}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:min(680px,94vw);background:#fff;border-left:1px solid var(--line);box-shadow:-16px 0 40px rgba(0,0,0,.13);transform:translateX(101%);transition:.2s;z-index:70;overflow:auto;padding:18px}
+.drawer.on{transform:none}
+.kv{display:grid;grid-template-columns:190px 1fr;gap:6px 12px;font-size:12.5px}
+.kv dt{color:var(--muted);font-weight:600} .kv dd{margin:0}
+.chip{display:inline-flex;gap:5px;align-items:center;border:1px solid var(--line);background:var(--surface2);border-radius:999px;padding:3px 9px;font-size:11px;font-weight:600;margin:0 4px 4px 0}
+.steps{display:grid;gap:8px;counter-reset:s}
+.steps li{background:var(--surface2);border:1px solid var(--line);border-radius:8px;padding:9px 11px;font-size:12.5px}
+.menu-btn{display:none}
+@media(max-width:1100px){
+  .app{grid-template-columns:1fr}
+  .side{position:fixed;z-index:60;width:248px;transform:translateX(-102%);transition:.2s}
+  body.nav .side{transform:none}
+  .menu-btn{display:inline-flex}
+  .g4,.g3,.g2{grid-template-columns:1fr}
+  .kpis{grid-template-columns:repeat(auto-fill,minmax(180px,1fr))}
+  .frow{grid-template-columns:1fr 1fr}
+}
+@media print{
+  .side,.top,.bar,.btn,.toast,.drawer{display:none!important}
+  .app{display:block} .wrap{padding:0;max-width:none}
+  .card,.tw{box-shadow:none;break-inside:avoid} .tw{max-height:none}
+  body{background:#fff}
+}
