@@ -381,36 +381,11 @@ const ZipRead = (() => {
       if (dv.getUint32(off, true) !== 0x02014b50) break;
       const method = dv.getUint16(off + 10, true);
       const csize = dv.getUint32(off + 20, true);
-      const usize = dv.getUint32(off + 24, true);   // <-- ADDED: uncompressed size
       const nlen = dv.getUint16(off + 28, true);
       const elen = dv.getUint16(off + 30, true);
       const clen = dv.getUint16(off + 32, true);
       const lho = dv.getUint32(off + 42, true);
       const name = new TextDecoder().decode(u8.subarray(off + 46, off + 46 + nlen));
-      /* --- PHANTOM-ROW CIRCUIT BREAKER ---
-         Catches Excel files that were re-saved with formatting applied to
-         entire columns/rows. Those files declare 1,048,576 rows even when
-         only a few hundred carry data, and decompressing them blows the
-         browser's memory budget. We detect the defect from the ZIP central
-         directory (no decompression needed) and refuse the file early so
-         the import layer can offer a clear message. */
-      const PHANTOM_MAX_UNCOMPRESSED = 25 * 1024 * 1024;  // 25 MB per sheet part
-      const PHANTOM_MAX_RATIO        = 12;                // max 12:1 expansion
-      if (name.startsWith("xl/worksheets/sheet") && name.endsWith(".xml")) {
-        if (usize > PHANTOM_MAX_UNCOMPRESSED ||
-            usize / Math.max(csize, 1) > PHANTOM_MAX_RATIO) {
-          throw new Error(
-            `${name} expands to ${(usize/1048576).toFixed(1)} MB ` +
-            `(compressed ${csize} bytes). This is almost certainly a ` +
-            `"phantom used-range" caused by opening the file in Excel, ` +
-            `applying formatting to whole rows or columns, and re-saving. ` +
-            `The system will attempt to auto-repair it. If that fails, ` +
-            `open the file in Excel, delete every empty row below your ` +
-            `last data row and every empty column to the right of your ` +
-            `last data column, then save a fresh copy.`
-          );
-        }
-      }
       if (lho + 30 > u8.length) { off += 46 + nlen + elen + clen; continue; }
       const lnl = dv.getUint16(lho + 26, true), lel = dv.getUint16(lho + 28, true);
       const start = lho + 30 + lnl + lel;
@@ -506,8 +481,16 @@ const ZipWrite = (() => {
 /* ------------------------------------------------------- XLSX read / write */
 const MAX_SHEET_COLS = 1024;   /* far wider than any loan extract; guards against stray cells */
 const Xlsx = (() => {
-  const colNum = ref => { let n = 0; for (const ch of ref.replace(/\d+/g, "")) n = n * 26 + (ch.charCodeAt(0) - 64); return n - 1; };
-  const colName = i => { let s = ""; i++; while (i > 0) { const r = (i - 1) % 26; s = String.fromCharCode(65 + r) + s; i = (i - r - 1) / 26; } return s; };
+  const colNum = ref => {
+    let n = 0;
+    for (const ch of ref.replace(/\d+/g, "")) n = n * 26 + (ch.charCodeAt(0) - 64);
+    return n - 1;
+  };
+  const colName = i => {
+    let s = ""; i++;
+    while (i > 0) { const r = (i - 1) % 26; s = String.fromCharCode(65 + r) + s; i = (i - r - 1) / 26; }
+    return s;
+  };
   const unesc = s => s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&#(\d+);/g, (m, d) => String.fromCharCode(+d)).replace(/&amp;/g, "&");
   const xesc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&apos;" }[c])).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
   const serialToISO = n => {
@@ -515,6 +498,8 @@ const Xlsx = (() => {
     if (!Number.isFinite(ms)) return "";
     return new Date(Math.round(ms)).toISOString().slice(0, 10);
   };
+
+  const idle = () => new Promise(r => setTimeout(r, 0));
 
   async function read(buffer) {
     const z = await ZipRead.entries(buffer);
@@ -524,13 +509,22 @@ const Xlsx = (() => {
     const styXml = z["xl/styles.xml"] ? await ZipRead.text(z["xl/styles.xml"]) : "";
 
     const shared = [];
-    ssXml.replace(/<si>([\s\S]*?)<\/si>/g, (m, body) => {
-      let s = ""; body.replace(/<t[^>]*>([\s\S]*?)<\/t>/g, (mm, t) => { s += unesc(t); return ""; });
-      shared.push(s); return "";
-    });
-    // date-formatted style ids
+    if (ssXml) {
+      const siMatches = ssXml.match(/<si\b[\s\S]*?<\/si>/g) || [];
+      for (let i = 0; i < siMatches.length; i++) {
+        let s = "";
+        siMatches[i].replace(/<t[^>]*>([\s\S]*?)<\/t>/g, (mm, t) => { s += unesc(t); return ""; });
+        shared.push(s);
+        if ((i & 0x7FF) === 0) await idle();
+      }
+    }
+
     const numFmt = {};
-    styXml.replace(/<numFmt[^>]*numFmtId="(\d+)"[^>]*formatCode="([^"]*)"/g, (m, id, code) => { numFmt[id] = unesc(code); return ""; });
+    styXml.replace(/<numFmt[^>]*numFmtId="(\d+)"[^>]*formatCode="([^"]*)"/g, (m, id, code) => {
+      numFmt[id] = unesc(code);
+      return "";
+    });
+
     const cellXfs = (styXml.match(/<cellXfs[\s\S]*?<\/cellXfs>/) || [""])[0];
     const dateStyle = [];
     let xi = 0;
@@ -538,35 +532,26 @@ const Xlsx = (() => {
       const id = (tag.match(/numFmtId="(\d+)"/) || [])[1];
       const code = numFmt[id] || "";
       const builtinDate = ["14","15","16","17","22","165","166","167"].includes(id);
-      dateStyle[xi++] = builtinDate || /[dmyh]/i.test(code) && /[\/\-]|yy|mmm/i.test(code);
+      dateStyle[xi++] = builtinDate || (/[dmyh]/i.test(code) && /[\/\-]|yy|mmm/i.test(code));
       return tag;
     });
 
-    /* Relationship and sheet lookup, order-independently.
-
-       Attribute order carries no meaning in XML, and exporters differ: some
-       write Id before Target, others Target before Id. Matching both in one
-       regex silently fails on the second form — the relationship map comes
-       back empty, every sheet path resolves to nothing, and the workbook
-       looks like it contains no data at all rather than reporting an error.
-       Each tag is therefore isolated first and its attributes read
-       individually. */
     const attr = (tag, name) => {
-      const m = tag.match(new RegExp("(?:^|\\s)" + name + '\\s*=\\s*"([^"]*)"')) ||
+      const m = tag.match(new RegExp('(?:^|\\s)' + name + '\\s*=\\s*"([^"]*)"')) ||
                 tag.match(new RegExp("(?:^|\\s)" + name + "\\s*=\\s*'([^']*)'"));
       return m ? m[1] : "";
     };
+
     const rels = {};
     (relXml.match(/<Relationship\b[^>]*>/g) || []).forEach(tag => {
       const id = attr(tag, "Id"), tgt = attr(tag, "Target");
       if (id && tgt) rels[id] = tgt.replace(/^\/?xl\//, "").replace(/^\.\//, "");
     });
+
     const sheets = [];
     (wbXml.match(/<sheet\b[^>]*\/?>/g) || []).forEach(tag => {
       const nm = attr(tag, "name");
       if (!nm) return;
-      /* r:id is the correct pointer; sheetId is a fallback for workbooks that
-         omit the relationship, and the positional guess is a last resort. */
       const rid = attr(tag, "r:id") || attr(tag, "relationshipId");
       const sid = attr(tag, "sheetId");
       let path = rid && rels[rid] ? "xl/" + rels[rid] : "";
@@ -575,12 +560,6 @@ const Xlsx = (() => {
       sheets.push({ name: unesc(nm), path });
     });
 
-    /* Fallback discovery. If the workbook index or its relationships are
-       missing, damaged, or point at parts that are not in the package, the
-       data is usually still there — every worksheet is its own part. Rather
-       than reporting an empty workbook, find the worksheet parts directly and
-       read them in file order. A sheet with a generic name is far better than
-       no sheet at all. */
     const partNames = Object.keys(z).filter(n => /^xl\/worksheets\/[^\/]+\.xml$/i.test(n));
     const resolved = sheets.filter(sh => z[sh.path]);
     if (!resolved.length && partNames.length) {
@@ -594,45 +573,63 @@ const Xlsx = (() => {
 
     const out = [];
     for (const sh of sheets) {
-      /* One unreadable sheet must not lose the other sixteen. */
       let xml = "";
       try { xml = await ZipRead.text(z[sh.path]); }
       catch (e) { out.push({ name: sh.name, rows: [], error: e.message }); continue; }
       if (!xml) { out.push({ name: sh.name, rows: [] }); continue; }
+
       const rows = [];
-      xml.replace(/<row[^>]*r="(\d+)"[^>]*>([\s\S]*?)<\/row>|<row[^>]*r="(\d+)"[^>]*\/>/g, (m, rn, body) => {
+      const rowMatches = xml.match(/<row\b[\s\S]*?<\/row>|<row\b[^>]*\/>/g) || [];
+
+      for (let rIdx = 0; rIdx < rowMatches.length; rIdx++) {
+        const rowXml = rowMatches[rIdx];
         const arr = [];
-        (body || "").replace(/<c\b([^>]*?)\/>|<c\b([^>]*)>([\s\S]*?)<\/c>/g, (mm, attrsSelf, attrsOpen, innerRaw) => {
-          const attrs = attrsSelf !== undefined ? attrsSelf : attrsOpen;
-          const inner = attrsSelf !== undefined ? undefined : innerRaw;
-          const ref = (attrs.match(/r="([A-Z]+\d+)"/) || [])[1] || "";
-          const t = (attrs.match(/t="([^"]+)"/) || [])[1] || "";
-          const s = +((attrs.match(/s="(\d+)"/) || [])[1] || -1);
+        let maxCol = -1;
+
+        const cellMatches = rowXml.match(/<c\b[^>]*\/>|<c\b[\s\S]*?<\/c>/g) || [];
+        for (let cIdx = 0; cIdx < cellMatches.length; cIdx++) {
+          const cellXml = cellMatches[cIdx];
+          const ref = (cellXml.match(/r="([A-Z]+\d+)"/) || [])[1] || "";
+          const t = (cellXml.match(/t="([^"]+)"/) || [])[1] || "";
+          const s = +((cellXml.match(/s="(\d+)"/) || [])[1] || -1);
+
           let v = "";
-          if (t === "inlineStr") { (inner || "").replace(/<t[^>]*>([\s\S]*?)<\/t>/g, (a, b) => { v += unesc(b); return ""; }); }
-          else {
-            const vm = (inner || "").match(/<v>([\s\S]*?)<\/v>/);
+          if (t === "inlineStr") {
+            const tm = cellXml.match(/<t[^>]*>([\s\S]*?)<\/t>/);
+            v = tm ? unesc(tm[1]) : "";
+          } else {
+            const vm = cellXml.match(/<v>([\s\S]*?)<\/v>/);
             v = vm ? unesc(vm[1]) : "";
             if (t === "s") v = shared[+v] ?? "";
           }
-          if (v !== "" && t !== "s" && t !== "str" && t !== "inlineStr" && s >= 0 && dateStyle[s] && Number.isFinite(+v) && +v > 20000 && +v < 80000) v = serialToISO(+v);
-          /* A workbook can carry a stray cell far to the right of the real
-             data — Excel leaves them behind after edits. Indexing straight
-             from the reference would then pad every row out to that column
-             and the padding loop below would run into the millions. Columns
-             beyond a sane width are dropped rather than allowed to blow up
-             the parse. */
-          if (ref) { const ci = colNum(ref); if (ci <= MAX_SHEET_COLS) arr[ci] = v; }
-          return "";
-        });
-        for (let i = 0; i < arr.length; i++) if (arr[i] === undefined) arr[i] = "";
-        rows.push(arr);
-        return "";
-      });
+
+          if (v !== "" && t !== "s" && t !== "str" && t !== "inlineStr" && s >= 0 && dateStyle[s] && Number.isFinite(+v) && +v > 20000 && +v < 80000) {
+            v = serialToISO(+v);
+          }
+
+          if (ref) {
+            const ci = colNum(ref);
+            if (ci <= MAX_SHEET_COLS) {
+              arr[ci] = v;
+              if (ci > maxCol) maxCol = ci;
+            }
+          }
+        }
+
+        const cleanRow = new Array(maxCol + 1);
+        for (let i = 0; i <= maxCol; i++) {
+          cleanRow[i] = arr[i] !== undefined ? arr[i] : "";
+        }
+        rows.push(cleanRow);
+
+        if ((rIdx % 100) === 0) {
+          await idle();
+        }
+      }
+
       out.push({ name: sh.name, rows, recovered: !!sh.recovered });
     }
-    /* Nothing at all came back, but the package clearly held worksheets.
-       Say so precisely rather than letting the caller report "no register". */
+
     if (partNames.length && out.every(x => !x.rows.length)) {
       const errs = out.filter(x => x.error).map(x => x.error);
       throw new Error("The workbook was opened but no rows could be read from any of its "
