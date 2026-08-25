@@ -1300,7 +1300,15 @@ function checkModules() {
   return false;
 }
 
-(async function boot() {
+/* Deferred until the document has finished parsing.
+
+   events.js is loaded before pdf.js and deploy.js, so running the boot
+   sequence the moment this file is evaluated meant the module check ran
+   while later scripts were still to come, and it reported pdf.js as missing
+   on a perfectly good deployment. Waiting for DOMContentLoaded means every
+   script tag has run, so the check tests the finished application rather
+   than a half-loaded one. */
+async function boot() {
   if (!checkModules()) return;
   await Vault.init();
   await loadState();
@@ -1314,7 +1322,10 @@ function checkModules() {
   ["click", "keydown", "touchstart"].forEach(ev => document.addEventListener(ev, resetIdleTimer, { passive: true }));
   if (restoreSession()) { finishBoot(); return; }
   showLogin();
-})();
+}
+
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
+else boot();
 
 
 /* ------------------------------------------------------ screen wiring */
@@ -1467,6 +1478,11 @@ function openUnlock() {
 
 /* ------------------------------------------------------------ final wiring */
 setTimeout(function () {
-  const bx = $("btnXlsx"); if (bx) bx.onclick = exportWorkbook;
-  if (Crypt.configured && !Crypt.on) openUnlock(); else render();
+  /* Skipped when a module is missing: the incomplete-application screen is
+     already showing and this would otherwise throw over the top of it. */
+  try {
+    if (typeof checkModules === "function" && !checkModules()) return;
+    const bx = $("btnXlsx"); if (bx) bx.onclick = exportWorkbook;
+    if (Crypt.configured && !Crypt.on) openUnlock(); else render();
+  } catch (e) { if (typeof reportFailure === "function") reportFailure("Start-up", e); }
 }, 0);
