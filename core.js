@@ -8,7 +8,7 @@
    Single-file offline application. No external libraries, no CDN, no network.
    Reference: RBCCI LPMRS source document 05 Aug 2026 + ACL matrix instruction.
    ======================================================================== */
-const APP = { version: "1.13.0", ruleVersion: "2026.08.1", root: "rbcci-lpmrs" };
+const APP = { version: "1.16.0", ruleVersion: "2026.08.1", root: "rbcci-lpmrs" };
 /* Declared here, above every consumer, so the limits that stop a damaged file
    taking the page down are visible in one place rather than buried. */
 const INFLATE_DEADLINE_MS = 25000;   /* hard ceiling on decompressing one part */
@@ -479,27 +479,132 @@ const ZipWrite = (() => {
 })();
 
 /* ------------------------------------------------------- XLSX read / write */
-const MAX_SHEET_COLS = 1024;   /* far wider than any loan extract; guards against stray cells */
+const MAX_SHEET_COLS = 1024;
+const MAX_SHEET_ROWS = 250000;
+const SHEET_SCAN_DEADLINE_MS = 30000;  /* backstop; a normal sheet scans in milliseconds */  /* far beyond any loan register; stops a formatted-to-the-bottom sheet */   /* far wider than any loan extract; guards against stray cells */
 const Xlsx = (() => {
-  const colNum = ref => {
-    let n = 0;
-    for (const ch of ref.replace(/\d+/g, "")) n = n * 26 + (ch.charCodeAt(0) - 64);
-    return n - 1;
-  };
-  const colName = i => {
-    let s = ""; i++;
-    while (i > 0) { const r = (i - 1) % 26; s = String.fromCharCode(65 + r) + s; i = (i - r - 1) / 26; }
-    return s;
-  };
+  const colNum = ref => { let n = 0; for (const ch of ref.replace(/\d+/g, "")) n = n * 26 + (ch.charCodeAt(0) - 64); return n - 1; };
+  const colName = i => { let s = ""; i++; while (i > 0) { const r = (i - 1) % 26; s = String.fromCharCode(65 + r) + s; i = (i - r - 1) / 26; } return s; };
   const unesc = s => s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&#(\d+);/g, (m, d) => String.fromCharCode(+d)).replace(/&amp;/g, "&");
   const xesc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&apos;" }[c])).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
+  /* ------------------------------------------------------------------
+     Worksheet scanner.
+
+     Row and cell extraction is done by walking the XML forward with
+     indexOf, never by a pattern that can backtrack. This is deliberate.
+     The previous regex approach was quadratic on a workbook whose sheet
+     had been formatted to the last row: Excel then writes a <row/> element
+     for every one of the 1,048,576 rows it supports, and the pattern
+     searched the remainder of a 58 MB document for a closing tag that was
+     never there \u2014 once per row. The page locked with nothing to report.
+
+     A forward scan cannot do that. Every character is visited at most
+     once per tag boundary, so cost is proportional to file size no matter
+     how the workbook is shaped. Malformed or truncated markup ends the
+     scan instead of stalling it, and a wall-clock deadline stands behind
+     everything as a last resort.
+     ------------------------------------------------------------------ */
+  function scanSheet(xml, shared, dateStyle) {
+    const rows = [];
+    let skippedEmpty = 0, truncated = false;
+    const deadline = Date.now() + SHEET_SCAN_DEADLINE_MS;
+    const n = xml.length;
+    let i = 0, guard = 0;
+
+    while (i < n) {
+      /* Sampled rather than checked every pass; a limit measured in
+         seconds does not need millisecond accuracy, and Date.now() on
+         every row would itself become the cost. */
+      if ((++guard & 0x3FF) === 0 && Date.now() > deadline) { truncated = true; break; }
+
+      const rs = xml.indexOf("<row", i);
+      if (rs < 0) break;
+      const rgt = xml.indexOf(">", rs + 4);
+      if (rgt < 0) break;
+
+      /* <row .../> carries formatting and never data. */
+      if (xml.charCodeAt(rgt - 1) === 47) { skippedEmpty++; i = rgt + 1; continue; }
+
+      const rend = xml.indexOf("</row>", rgt + 1);
+      const bodyEnd = rend < 0 ? n : rend;
+      const nextI = rend < 0 ? n : rend + 6;
+
+      /* A row with no cell at all is formatting only, as above. */
+      if (xml.indexOf("<c", rgt + 1) < 0 || xml.indexOf("<c", rgt + 1) > bodyEnd) {
+        skippedEmpty++; i = nextI; continue;
+      }
+      if (rows.length >= MAX_SHEET_ROWS) { truncated = true; break; }
+
+      const arr = [];
+      let j = rgt + 1;
+      while (j < bodyEnd) {
+        const cs = xml.indexOf("<c", j);
+        if (cs < 0 || cs >= bodyEnd) break;
+        const cgt = xml.indexOf(">", cs + 2);
+        if (cgt < 0 || cgt > bodyEnd) break;
+
+        const selfClosed = xml.charCodeAt(cgt - 1) === 47;
+        const attrs = xml.slice(cs + 2, selfClosed ? cgt - 1 : cgt);
+        let inner = "", cend;
+        if (selfClosed) {
+          cend = cgt + 1;
+        } else {
+          const ce = xml.indexOf("</c>", cgt + 1);
+          const innerEnd = (ce < 0 || ce > bodyEnd) ? bodyEnd : ce;
+          inner = xml.slice(cgt + 1, innerEnd);
+          cend = (ce < 0 || ce > bodyEnd) ? bodyEnd : ce + 4;
+        }
+        j = cend > j ? cend : j + 1;   /* never allow the cursor to stall */
+
+        /* Attribute strings are a few dozen characters; matching within
+           them is bounded and safe. */
+        const ref = (attrs.match(/r="([A-Z]+\d+)"/) || [])[1] || "";
+        const t = (attrs.match(/t="([^"]+)"/) || [])[1] || "";
+        const st = +((attrs.match(/s="(\d+)"/) || [])[1] || -1);
+
+        let v = "";
+        if (t === "inlineStr") {
+          let k = 0;
+          while (true) {
+            const ts = inner.indexOf("<t", k);
+            if (ts < 0) break;
+            const tgt = inner.indexOf(">", ts + 2);
+            if (tgt < 0) break;
+            if (inner.charCodeAt(tgt - 1) === 47) { k = tgt + 1; continue; }
+            const te = inner.indexOf("</t>", tgt + 1);
+            v += unesc(inner.slice(tgt + 1, te < 0 ? inner.length : te));
+            if (te < 0) break;
+            k = te + 4;
+          }
+        } else {
+          const vs = inner.indexOf("<v>");
+          if (vs >= 0) {
+            const ve = inner.indexOf("</v>", vs + 3);
+            v = unesc(inner.slice(vs + 3, ve < 0 ? inner.length : ve));
+          }
+          if (t === "s") v = shared[+v] ?? "";
+        }
+
+        if (v !== "" && t !== "s" && t !== "str" && t !== "inlineStr" && st >= 0 && dateStyle[st]
+            && Number.isFinite(+v) && +v > 20000 && +v < 80000) v = serialToISO(+v);
+
+        /* A stray cell far to the right would otherwise pad every row out
+           to its column. */
+        if (ref) { const ci = colNum(ref); if (ci <= MAX_SHEET_COLS) arr[ci] = v; }
+      }
+
+      for (let k = 0; k < arr.length; k++) if (arr[k] === undefined) arr[k] = "";
+      rows.push(arr);
+      i = nextI;
+    }
+    return { rows, skippedEmpty, truncated };
+  }
+
   const serialToISO = n => {
     const ms = (n - 25569) * 86400000;
     if (!Number.isFinite(ms)) return "";
     return new Date(Math.round(ms)).toISOString().slice(0, 10);
   };
-
-  const idle = () => new Promise(r => setTimeout(r, 0));
 
   async function read(buffer) {
     const z = await ZipRead.entries(buffer);
@@ -509,22 +614,13 @@ const Xlsx = (() => {
     const styXml = z["xl/styles.xml"] ? await ZipRead.text(z["xl/styles.xml"]) : "";
 
     const shared = [];
-    if (ssXml) {
-      const siMatches = ssXml.match(/<si\b[\s\S]*?<\/si>/g) || [];
-      for (let i = 0; i < siMatches.length; i++) {
-        let s = "";
-        siMatches[i].replace(/<t[^>]*>([\s\S]*?)<\/t>/g, (mm, t) => { s += unesc(t); return ""; });
-        shared.push(s);
-        if ((i & 0x7FF) === 0) await idle();
-      }
-    }
-
-    const numFmt = {};
-    styXml.replace(/<numFmt[^>]*numFmtId="(\d+)"[^>]*formatCode="([^"]*)"/g, (m, id, code) => {
-      numFmt[id] = unesc(code);
-      return "";
+    ssXml.replace(/<si>([\s\S]*?)<\/si>/g, (m, body) => {
+      let s = ""; body.replace(/<t[^>]*>([\s\S]*?)<\/t>/g, (mm, t) => { s += unesc(t); return ""; });
+      shared.push(s); return "";
     });
-
+    // date-formatted style ids
+    const numFmt = {};
+    styXml.replace(/<numFmt[^>]*numFmtId="(\d+)"[^>]*formatCode="([^"]*)"/g, (m, id, code) => { numFmt[id] = unesc(code); return ""; });
     const cellXfs = (styXml.match(/<cellXfs[\s\S]*?<\/cellXfs>/) || [""])[0];
     const dateStyle = [];
     let xi = 0;
@@ -532,26 +628,35 @@ const Xlsx = (() => {
       const id = (tag.match(/numFmtId="(\d+)"/) || [])[1];
       const code = numFmt[id] || "";
       const builtinDate = ["14","15","16","17","22","165","166","167"].includes(id);
-      dateStyle[xi++] = builtinDate || (/[dmyh]/i.test(code) && /[\/\-]|yy|mmm/i.test(code));
+      dateStyle[xi++] = builtinDate || /[dmyh]/i.test(code) && /[\/\-]|yy|mmm/i.test(code);
       return tag;
     });
 
+    /* Relationship and sheet lookup, order-independently.
+
+       Attribute order carries no meaning in XML, and exporters differ: some
+       write Id before Target, others Target before Id. Matching both in one
+       regex silently fails on the second form — the relationship map comes
+       back empty, every sheet path resolves to nothing, and the workbook
+       looks like it contains no data at all rather than reporting an error.
+       Each tag is therefore isolated first and its attributes read
+       individually. */
     const attr = (tag, name) => {
-      const m = tag.match(new RegExp('(?:^|\\s)' + name + '\\s*=\\s*"([^"]*)"')) ||
+      const m = tag.match(new RegExp("(?:^|\\s)" + name + '\\s*=\\s*"([^"]*)"')) ||
                 tag.match(new RegExp("(?:^|\\s)" + name + "\\s*=\\s*'([^']*)'"));
       return m ? m[1] : "";
     };
-
     const rels = {};
     (relXml.match(/<Relationship\b[^>]*>/g) || []).forEach(tag => {
       const id = attr(tag, "Id"), tgt = attr(tag, "Target");
       if (id && tgt) rels[id] = tgt.replace(/^\/?xl\//, "").replace(/^\.\//, "");
     });
-
     const sheets = [];
     (wbXml.match(/<sheet\b[^>]*\/?>/g) || []).forEach(tag => {
       const nm = attr(tag, "name");
       if (!nm) return;
+      /* r:id is the correct pointer; sheetId is a fallback for workbooks that
+         omit the relationship, and the positional guess is a last resort. */
       const rid = attr(tag, "r:id") || attr(tag, "relationshipId");
       const sid = attr(tag, "sheetId");
       let path = rid && rels[rid] ? "xl/" + rels[rid] : "";
@@ -560,6 +665,12 @@ const Xlsx = (() => {
       sheets.push({ name: unesc(nm), path });
     });
 
+    /* Fallback discovery. If the workbook index or its relationships are
+       missing, damaged, or point at parts that are not in the package, the
+       data is usually still there — every worksheet is its own part. Rather
+       than reporting an empty workbook, find the worksheet parts directly and
+       read them in file order. A sheet with a generic name is far better than
+       no sheet at all. */
     const partNames = Object.keys(z).filter(n => /^xl\/worksheets\/[^\/]+\.xml$/i.test(n));
     const resolved = sheets.filter(sh => z[sh.path]);
     if (!resolved.length && partNames.length) {
@@ -573,63 +684,17 @@ const Xlsx = (() => {
 
     const out = [];
     for (const sh of sheets) {
+      /* One unreadable sheet must not lose the other sixteen. */
       let xml = "";
       try { xml = await ZipRead.text(z[sh.path]); }
       catch (e) { out.push({ name: sh.name, rows: [], error: e.message }); continue; }
       if (!xml) { out.push({ name: sh.name, rows: [] }); continue; }
-
-      const rows = [];
-      const rowMatches = xml.match(/<row\b[\s\S]*?<\/row>|<row\b[^>]*\/>/g) || [];
-
-      for (let rIdx = 0; rIdx < rowMatches.length; rIdx++) {
-        const rowXml = rowMatches[rIdx];
-        const arr = [];
-        let maxCol = -1;
-
-        const cellMatches = rowXml.match(/<c\b[^>]*\/>|<c\b[\s\S]*?<\/c>/g) || [];
-        for (let cIdx = 0; cIdx < cellMatches.length; cIdx++) {
-          const cellXml = cellMatches[cIdx];
-          const ref = (cellXml.match(/r="([A-Z]+\d+)"/) || [])[1] || "";
-          const t = (cellXml.match(/t="([^"]+)"/) || [])[1] || "";
-          const s = +((cellXml.match(/s="(\d+)"/) || [])[1] || -1);
-
-          let v = "";
-          if (t === "inlineStr") {
-            const tm = cellXml.match(/<t[^>]*>([\s\S]*?)<\/t>/);
-            v = tm ? unesc(tm[1]) : "";
-          } else {
-            const vm = cellXml.match(/<v>([\s\S]*?)<\/v>/);
-            v = vm ? unesc(vm[1]) : "";
-            if (t === "s") v = shared[+v] ?? "";
-          }
-
-          if (v !== "" && t !== "s" && t !== "str" && t !== "inlineStr" && s >= 0 && dateStyle[s] && Number.isFinite(+v) && +v > 20000 && +v < 80000) {
-            v = serialToISO(+v);
-          }
-
-          if (ref) {
-            const ci = colNum(ref);
-            if (ci <= MAX_SHEET_COLS) {
-              arr[ci] = v;
-              if (ci > maxCol) maxCol = ci;
-            }
-          }
-        }
-
-        const cleanRow = new Array(maxCol + 1);
-        for (let i = 0; i <= maxCol; i++) {
-          cleanRow[i] = arr[i] !== undefined ? arr[i] : "";
-        }
-        rows.push(cleanRow);
-
-        if ((rIdx % 100) === 0) {
-          await idle();
-        }
-      }
-
-      out.push({ name: sh.name, rows, recovered: !!sh.recovered });
+      const parsed = scanSheet(xml, shared, dateStyle);
+      out.push({ name: sh.name, rows: parsed.rows, recovered: !!sh.recovered,
+                 skippedEmpty: parsed.skippedEmpty, truncated: parsed.truncated });
     }
-
+    /* Nothing at all came back, but the package clearly held worksheets.
+       Say so precisely rather than letting the caller report "no register". */
     if (partNames.length && out.every(x => !x.rows.length)) {
       const errs = out.filter(x => x.error).map(x => x.error);
       throw new Error("The workbook was opened but no rows could be read from any of its "
