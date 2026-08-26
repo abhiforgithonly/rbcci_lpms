@@ -836,7 +836,8 @@ function vImport() {
           <b>Drop an .xlsx or .csv file here</b>
           <p class="mut sm" style="margin:6px 0 12px">Read entirely inside this browser. No file leaves the machine.</p>
           <input type="file" id="file" accept=".xlsx,.xlsm,.csv,.txt" multiple>
-          <p class="mut sm" style="margin:12px 0 0">A file will not import? <button class="btn sm ghost" data-act="diagnose-file">Check the file instead</button><br>
+          <p class="mut sm" style="margin:12px 0 0">Trouble with a file? <button class="btn sm ghost" data-act="clean-workbook">Clean up this file</button> <button class="btn sm ghost" data-act="diagnose-file">Check the file</button><br>
+          <span class="mut sm"><b>Clean up</b> rebuilds the workbook without the empty formatted rows Excel leaves behind, making it far smaller and quicker to open. Importing works either way.<br></span>
           <span class="mut sm">Choose the file above, then press this. It describes the file's structure so the problem can be found, and includes no borrower names, account numbers or balances.</span></p>
         </div>
         <div class="bar" style="margin-top:12px"><button class="btn sec" data-act="load-sample">Load sample loan book</button><button class="btn ghost" data-act="backup-open">Download a copy</button><button class="btn bad" data-act="clear-period-open">Clear period ${E(periodKey())}</button></div>
