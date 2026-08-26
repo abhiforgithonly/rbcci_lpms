@@ -141,6 +141,21 @@ async function handleFiles(files) {
   }
   for (const file of files) {
     try {
+      /* Backend structure pre-check, ahead of the real (client-side) import.
+         Offline or backend-unavailable is the ordinary path for this app, not
+         an error, so it falls straight through to the existing behaviour with
+         no extra message. See backendVerify() in import.js. */
+      importStage("Checking " + file.name, file.name);
+      const pre = await backendVerify(file);
+      if (pre.available && !pre.recognised) {
+        importDone();
+        toast(file.name + ": " + (pre.reason || "no recognised loan register was found") + ".", "err");
+        continue;
+      }
+      if (pre.available) {
+        toast(file.name + ": pre-check passed" + (pre.bestSheet ? " — \u201c" + pre.bestSheet.name + "\u201d, " + pre.bestSheet.mappedColumns + " column(s) mapped" : "") + ". Importing\u2026");
+      }
+
       importStage("Reading " + file.name, file.name);
       /* Yield once so the browser paints the message before the parse begins;
          otherwise a slow parse blocks the very update that explains it. */
@@ -1272,6 +1287,7 @@ window.addEventListener("unhandledrejection", e => reportFailure("Background tas
    is exactly the signal wanted when a file genuinely failed to load. */
 const REQUIRED_GLOBALS = [
   ["core.js", () => typeof Xlsx],
+  ["shared/schema.js", () => typeof mapHeaders],
   ["letters.js", () => typeof defaultLetterTemplates],
   ["rules.js", () => typeof defaultRules],
   ["engine.js", () => typeof Eng],
