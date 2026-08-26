@@ -1,0 +1,9 @@
+{
+  "name": "rbcci-lpmrs",
+  "private": true,
+  "version": "1.0.0",
+  "description": "RBCCI LPMRS static app plus a Vercel serverless backend for pre-import structure verification.",
+  "dependencies": {
+    "xlsx": "^0.18.5"
+  }
+}
