@@ -5,130 +5,6 @@
    workbook / JSON export, backup restore, and the extended
    (16-schedule) workbook export used by events.js.               */
 
-/* ============================================================
-   PHANTOM-ROW AUTO-REPAIR
-   Detects Excel workbooks whose sheets were bloated by a re-save
-   in desktop Excel (formatting applied to whole columns/rows
-   materialises 1,048,576 empty <row> elements). Strips the empty
-   rows and rewrites the <dimension> so the parser never sees the
-   defect. Runs entirely in memory — the user never has to open
-   the file in Excel to fix it.
-
-   This never calls ZipRead.entries() on a suspicious file: that
-   function refuses a phantom-row workbook outright (see core.js),
-   which is exactly the file this repair exists to fix. Instead it
-   re-reads the ZIP central and local directories itself the same
-   way ZipRead.entries() does, then decompresses each part with the
-   already-exposed ZipRead.text(), which carries no such guard.
-   ============================================================ */
-const PHANTOM_MAX_UNCOMPRESSED = 25 * 1024 * 1024;
-const PHANTOM_MAX_RATIO        = 12;
-
-function scanZipParts(buffer) {
-  const u8 = new Uint8Array(buffer), dv = new DataView(buffer);
-  let eocd = -1;
-  for (let i = u8.length - 22; i >= 0 && i > u8.length - 66000; i--) {
-    if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
-  }
-  if (eocd < 0) return null;   // not a readable ZIP directory
-  let count = dv.getUint16(eocd + 10, true);
-  let off = dv.getUint32(eocd + 16, true);
-  if (count === 0xFFFF || off === 0xFFFFFFFF) {
-    for (let i = eocd - 20; i >= 0 && i > eocd - 4096; i--) {
-      if (dv.getUint32(i, true) === 0x07064b50) {
-        const z64 = Number(dv.getBigUint64(i + 8, true));
-        if (dv.getUint32(z64, true) === 0x06064b50) {
-          count = Number(dv.getBigUint64(z64 + 32, true));
-          off = Number(dv.getBigUint64(z64 + 48, true));
-        }
-        break;
-      }
-    }
-  }
-  const parts = [];
-  for (let i = 0; i < count; i++) {
-    if (off < 0 || off + 46 > u8.length) break;
-    if (dv.getUint32(off, true) !== 0x02014b50) break;
-    const method = dv.getUint16(off + 10, true);
-    const csize = dv.getUint32(off + 20, true);
-    const usize = dv.getUint32(off + 24, true);
-    const nlen = dv.getUint16(off + 28, true);
-    const elen = dv.getUint16(off + 30, true);
-    const clen = dv.getUint16(off + 32, true);
-    const lho = dv.getUint32(off + 42, true);
-    const name = new TextDecoder().decode(u8.subarray(off + 46, off + 46 + nlen));
-    if (lho + 30 <= u8.length) {
-      const lnl = dv.getUint16(lho + 26, true), lel = dv.getUint16(lho + 28, true);
-      const start = lho + 30 + lnl + lel;
-      const end = (csize > 0 && start + csize <= u8.length) ? start + csize : u8.length;
-      if (start < u8.length) parts.push({ name, method, csize, usize, data: u8.subarray(start, end) });
-    }
-    const step = 46 + nlen + elen + clen;
-    if (step <= 0) break;
-    off += step;
-  }
-  return parts;
-}
-
-async function repairPhantomRows(file) {
-  const ab = await file.arrayBuffer();
-  const parts = scanZipParts(ab);
-  if (!parts) return file;   // not a readable ZIP - let the normal parser report why
-
-  const suspicious = new Set(parts.filter(p =>
-    p.name.startsWith("xl/worksheets/sheet") && p.name.endsWith(".xml") &&
-    (p.usize > PHANTOM_MAX_UNCOMPRESSED || p.usize / Math.max(p.csize, 1) > PHANTOM_MAX_RATIO)
-  ));
-  if (!suspicious.size) return file;   // clean file, nothing to repair
-
-  const rebuilt = [];
-  for (const p of parts) {
-    /* Every part is decompressed and handed back to ZipWrite.build as raw
-       content, which re-compresses it itself — the writer has no "pass
-       through already-compressed bytes" path, so a part cannot be copied
-       across unchanged even when it did not need repair. */
-    const xml = await ZipRead.text({ method: p.method, data: p.data });
-    rebuilt.push({ name: p.name, data: suspicious.has(p) ? stripPhantomRows(xml) : xml });
-  }
-  return await ZipWrite.build(rebuilt, file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-}
-
-function stripPhantomRows(xml) {
-  // 1. Find the real used range by scanning for <row> elements that
-  //    actually contain at least one <c> (cell).
-  let maxRow = 0;
-  let maxCol = "";
-  const rowRe = /<row\b([^>]*)>([\s\S]*?)<\/row>|<row\b([^>]*)\/>/g;
-  let m;
-  while ((m = rowRe.exec(xml)) !== null) {
-    const attrs = m[1] || m[3] || "";
-    const body  = m[2] || "";
-    if (!/<c[\s>]/.test(body)) continue; // empty / phantom row
-    const rn = (attrs.match(/\br="(\d+)"/) || [])[1];
-    if (rn) maxRow = Math.max(maxRow, parseInt(rn, 10));
-    const cells = body.matchAll(/\br="([A-Z]+)\d+"/g);
-    for (const cm of cells) {
-      if (cm[1] > maxCol) maxCol = cm[1];
-    }
-  }
-
-  // 2. Remove every <row> that has no <c> children.
-  let repaired = xml.replace(
-    /<row\b[^>]*>\s*<\/row>|<row\b[^>]*\/>/g,
-    (full) => /<c[\s>]/.test(full) ? full : ""
-  );
-
-  // 3. Correct the <dimension> element so downstream code sees the
-  //    real used range instead of A1:AS1048576.
-  if (maxRow > 0 && maxCol) {
-    repaired = repaired.replace(
-      /<dimension\b[^>]*ref="[^"]*"[^>]*\/>/,
-      `<dimension ref="A1:${maxCol}${maxRow}"/>`
-    );
-  }
-  return repaired;
-}
-
 /* ============================================================== IMPORT
    Maps the bank's own core-banking extract columns (as used in
    "RBCCI Loan Report June 30 2026") onto the LPMRS account model.
@@ -303,26 +179,6 @@ function rowsToAccounts(headers, rows, source) {
 
 async function importFile(file) {
   const name = file.name, ext = name.split(".").pop().toLowerCase();
-
-  /* --- PHANTOM-ROW AUTO-REPAIR ---
-     If this is an .xlsx/.xlsm, scan the ZIP central directory and
-     transparently strip phantom empty rows before the parser ever
-     sees the file. This is what prevents the June-2026-style OOM
-     crash from recurring. */
-  if (ext === "xlsx" || ext === "xlsm") {
-    try {
-      file = await repairPhantomRows(file);
-    } catch (e) {
-      // Surface a clear, actionable message instead of a silent OOM kill
-      throw new Error(
-        "This workbook could not be auto-repaired: " + e.message +
-        " Open it in Excel, delete every empty row below your last " +
-        "data row and every empty column to the right of your last " +
-        "data column, then save a fresh copy and try again."
-      );
-    }
-  }
-
   const buf = await file.arrayBuffer();
   const hash = await sha256(buf);
   let sheets = [];
@@ -863,4 +719,113 @@ async function runDiagnostic(files) {
   $("dgClose").onclick = () => $("modal").classList.remove("on");
   $("dgSave").onclick = () => download("file-check-" + today().replace(/-/g, "") + ".txt",
     new Blob([text], { type: "text/plain" }));
+}
+
+/* ==================================================================== */
+/*  Workbook cleaner                                                    */
+/*                                                                      */
+/*  A sheet formatted to the last row makes Excel write a <row/> element */
+/*  for every one of the 1,048,576 rows it supports. One file seen here  */
+/*  carried 58 MB of such rows behind 659 real ones. The importer now    */
+/*  reads those files directly, so this is no longer needed to get data  */
+/*  in — but the underlying workbook is still bloated, slow to open in   */
+/*  Excel itself, and awkward to email. This produces a clean copy: the  */
+/*  same sheets, the same values, without the megabytes of empty         */
+/*  formatting.                                                         */
+/*                                                                      */
+/*  It rebuilds the file from the values already parsed rather than      */
+/*  editing the original, so nothing about the original's damage can     */
+/*  carry through, and it runs entirely in the browser — no bank data    */
+/*  leaves the machine.                                                  */
+/* ==================================================================== */
+async function cleanWorkbook(file) {
+  const buf = await file.arrayBuffer();
+  const sheets = await Xlsx.read(buf);
+
+  const kept = [];
+  let originalRows = 0, cleanedRows = 0, blankDropped = 0;
+
+  sheets.forEach(sh => {
+    /* Trailing rows with nothing in them add size and no meaning. */
+    const rows = sh.rows.slice();
+    while (rows.length && !rows[rows.length - 1].some(v => String(v ?? "").trim() !== "")) rows.pop();
+    /* Trailing empty columns, for the same reason. */
+    let width = 0;
+    rows.forEach(r => {
+      for (let i = r.length - 1; i >= 0; i--) {
+        if (String(r[i] ?? "").trim() !== "") { width = Math.max(width, i + 1); break; }
+      }
+    });
+    const trimmed = rows.map(r => {
+      const out = [];
+      for (let i = 0; i < width; i++) out.push(r[i] ?? "");
+      return out;
+    });
+    originalRows += (sh.rows.length + (sh.skippedEmpty || 0));
+    cleanedRows += trimmed.length;
+    blankDropped += (sh.skippedEmpty || 0) + (sh.rows.length - trimmed.length);
+    kept.push({ name: sh.name, rows: trimmed, width });
+  });
+
+  if (!cleanedRows) throw new Error("No data could be read from this workbook, so there is nothing to clean.");
+
+  /* Values arrive from the reader as strings. Anything that is plainly a
+     number is written back as one, so the cleaned copy stays usable for
+     arithmetic in Excel rather than becoming text. Account numbers and
+     other identifiers keep their leading zeros because they do not parse
+     as clean numbers. */
+  const asCell = v => {
+    const t = String(v ?? "").trim();
+    if (t === "") return "";
+    if (/^-?\d+(\.\d+)?$/.test(t) && !/^0\d/.test(t) && Number.isFinite(+t)) return +t;
+    return t;
+  };
+  const blob = await Xlsx.write(kept.map(s => ({
+    name: s.name,
+    headRows: 1,
+    widths: new Array(Math.max(s.width, 1)).fill(16),
+    rows: s.rows.map(r => r.map(asCell))
+  })));
+
+  return { blob, originalRows, cleanedRows, blankDropped, sheets: kept.length,
+           originalSize: file.size, cleanSize: blob.size };
+}
+
+async function runCleanWorkbook(files) {
+  if (!files || !files.length) { toast("Choose a file first, then press this.", "err"); return; }
+  const file = files[0];
+  importStage("Cleaning " + file.name, file.name);
+  await new Promise(r => setTimeout(r, 0));
+  let res;
+  try { res = await cleanWorkbook(file); }
+  catch (e) { importDone(); reportFailure("Could not clean " + file.name, e); return; }
+  importDone();
+
+  const name = file.name.replace(/\.xlsx?$/i, "") + " (cleaned).xlsx";
+  const saved = res.originalSize - res.cleanSize;
+  const pct = res.originalSize ? Math.round(saved / res.originalSize * 100) : 0;
+
+  $("modalBody").innerHTML = `
+    <h2 style="margin:0 0 6px;font-size:18px">Cleaned copy ready</h2>
+    <p class="mut sm" style="margin:0 0 12px">Rebuilt from the values in ${E(file.name)}. Every sheet and every figure is kept; only empty formatted rows and columns are removed.</p>
+    ${T([{ h: "", v: r => E(r[0]) }, { h: "", n: 1, v: r => E(r[1]) }], [
+      ["Sheets kept", CNT(res.sheets)],
+      ["Rows in the original file", CNT(res.originalRows)],
+      ["Rows with actual data", CNT(res.cleanedRows)],
+      ["Empty rows removed", CNT(res.blankDropped)],
+      ["File size before", (res.originalSize / 1024).toFixed(0) + " KB"],
+      ["File size after", (res.cleanSize / 1024).toFixed(0) + " KB"]
+    ])}
+    ${saved > 0 ? `<div class="note g" style="margin-top:10px"><b>${pct}% smaller</b>The cleaned copy opens faster in Excel and is easier to send. Import either version \u2014 the system reads both.</div>`
+                : `<div class="note" style="margin-top:10px"><b>This workbook was already tidy</b>Nothing significant needed removing.</div>`}
+    <div class="bar" style="margin-top:12px">
+      <button class="btn ghost" id="cwClose">Close</button>
+      <button class="btn" id="cwSave">Download the cleaned copy</button>
+    </div>`;
+  $("modal").classList.add("on");
+  $("cwClose").onclick = () => $("modal").classList.remove("on");
+  $("cwSave").onclick = () => {
+    download(name, res.blob);
+    audit("Cleaned a workbook", `${file.name} \u2014 ${CNT(res.blankDropped)} empty row(s) removed, ${(res.originalSize/1024).toFixed(0)} KB to ${(res.cleanSize/1024).toFixed(0)} KB`);
+  };
 }
