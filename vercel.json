@@ -21,6 +21,17 @@
         { "key": "Cache-Control", "value": "no-cache, must-revalidate" },
         { "key": "Service-Worker-Allowed", "value": "/" }
       ]
+    },
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store" }
+      ]
     }
-  ]
+  ],
+  "functions": {
+    "api/verify-import.js": {
+      "maxDuration": 15
+    }
+  }
 }
