@@ -9,100 +9,15 @@
    Maps the bank's own core-banking extract columns (as used in
    "RBCCI Loan Report June 30 2026") onto the LPMRS account model.
    Unrecognised columns are retained verbatim under raw{}.
-   ==================================================================== */
-const FIELDS = [
-  ["accountNo",        "Loan account number",        ["loan product number", "loan account number", "account number", "account no"]],
-  ["pnNo",             "PN number",                  ["loan extra number", "pn number", "promissory note"]],
-  ["borrower",         "Borrower name",              ["loan customer effective name", "borrower name", "borrower", "customer name"]],
-  ["cif",              "CIF / borrower number",      ["cif", "cif number", "customer number", "borrower id"]],
-  ["grantDate",        "Date granted",               ["loan grant date", "date granted", "release date"]],
-  ["maturityDate",     "Maturity date",              ["loan maturity date", "maturity date"]],
-  ["principal",        "Original principal",         ["loan principal amount", "original principal", "original amount"]],
-  ["balance",          "Outstanding principal",      ["loan principal balance", "principal balance", "outstanding balance", "outstanding principal"]],
-  ["rate",             "Interest rate",              ["loan interest rate", "interest rate"]],
-  ["eir",              "Effective interest rate",    ["loan eir annual", "eir"]],
-  ["term",             "Term",                       ["loan term", "term"]],
-  ["dosriFlag",        "DOSRI flag",                 ["loan customer dosri", "dosri flag", "dosri"]],
-  ["dosriType",        "DOSRI type",                 ["loan customer dosri type", "dosri type"]],
-  ["creationType",     "Contract / creation type",   ["loan creation type", "contract status", "creation type"]],
-  ["productType",      "Product type",               ["product type"]],
-  ["securityDesc",     "Security description",       ["security", "collateral type", "security type"]],
-  ["misGroup",         "MIS group",                  ["mis group", "loan type"]],
-  ["purpose",          "Loan purpose",               ["loan purpose", "purpose"]],
-  ["sourceStatus",     "Source loan status",         ["loan status", "account status"]],
-  ["dpd",              "Days past due",              ["past due days", "days past due", "dpd"]],
-  ["sourceClassification", "Source classification",  ["loan past due classification", "classification", "past due classification"]],
-  ["lastStatusChange", "Last status change",         ["last status change"]],
-  ["penalty",          "Outstanding penalty",        ["outstanding penalty balance", "penalty"]],
-  ["pdi",              "Past due interest",          ["outstanding pdi balance", "pdi"]],
-  ["amortization",     "Amortisation amount",        ["max amortization amount", "amortization", "amortisation"]],
-  ["cycle",            "Loan cycle",                 ["loan cycle"]],
-  ["contact",          "Contact number",             ["contact numbers", "contact number"]],
-  ["birthDate",        "Date of birth / registration", ["loan customer individual data birth date", "loan customer individual date of birth", "date of birth", "birth date"]],
-  ["address",          "Address",                    ["address"]],
-  ["psic",             "PSIC / industry",            ["loan purpose to industry", "psic", "industry", "loan economic activity"]],
-  ["paymentInterval",  "Payment interval",           ["payment interval", "payment frequency"]],
-  ["sourceProvisionRate", "Source provision rate",   ["loan provision rate", "provision rate"]],
-  /* Present in the raw core-banking export; carried so nothing in the source
-     file is silently discarded, even where no computation uses it yet. */
-  ["penaltyMaturityBalance", "Outstanding penalty at maturity", ["outstanding penalty maturity balance"]],
-  ["pdiMaturityBalance",  "Outstanding PDI at maturity",  ["outstanding pdi maturity balance"]],
-  ["asEarnedInterest",    "As-earned interest balance",   ["as earned interest balance"]],
-  ["interestAmount",      "Loan interest amount",         ["loan interest amount"]],
-  ["manualMetadata",      "Loan manual metadata",         ["loan manual metadata"]],
-  ["accruedInterest",  "Accrued interest",           ["loan accrued interest"]],
-  ["lastPaymentDate",  "Last payment date",          ["last payment date", "date paid"]],
-  ["lastPrincipalPay", "Last principal payment",     ["last principal payment"]],
-  ["lastInterestPay",  "Last interest payment",      ["last interest payment"]],
-  ["sourceEclBucket",  "Source ECL bucket",          ["ecl bucket"]],
-  ["economicActivity", "Economic activity",          ["loan economic activity"]],
-  ["totalAmortNo",     "Total amortisations",        ["loan total amortization number"]],
-  ["firstAmortDue",    "First amortisation due",     ["loan first amortization due date", "loan first amortization due"]],
-  ["firstUnpaidDate",  "First unpaid installment",   ["first unpaid installment", "first unpaid date"]],
-  ["spouse",           "Spouse name",                ["spouse name", "spouse"]],
-  ["housingFlag",      "Housing loan flag",          ["housing loan flag"]],
-  ["bookedAcl",        "Booked ACL",                 ["booked acl", "source provision amount", "computed expected provision amount"]],
-  /* fields that the core extract does not supply — captured manually */
-  ["collateralValue",  "Collateral appraised value", ["collateral value / appraisal", "appraised value", "collateral value"]],
-  ["eligibleCollateralValue", "Eligible collateral value", ["eligible collateral value"]],
-  ["collateralPerfected", "Collateral perfected (Y/N)", ["collateral perfected", "perfection"]],
-  ["sellingPrice",     "Housing selling price",      ["selling price", "contract price"]],
-  ["housingUnitType",  "Housing unit type",          ["housing unit type", "property type"]],
-  ["programCode",      "Government programme",       ["program code", "programme", "funding program", "funding source"]],
-  ["sbcorpFunded",     "SBCorp funded share",        ["sbcorp funded", "sbcorp share"]],
-  ["rbcciCounterpart", "RBCCI counterpart",          ["rbcci counterpart", "rbcci share"]],
-  ["retainedRiskPct",  "Retained credit risk %",     ["retained risk", "credit risk retained"]],
-  ["internalRiskScore", "Internal credit-risk score (0-100)", ["internal risk score", "credit risk score", "risk score"]],
-  ["riskTierOverride", "Risk tier override code",    ["risk tier override"]],
-  ["afrdStatus",       "AFRD status",                ["afrd status", "afrd eligibility"]],
-  ["afrdEligibleAmount", "AFRD eligible amount",     ["afrd eligible amount"]],
-  ["afrdEvidence",     "AFRD evidence reference",    ["afrd evidence", "afrd supporting document"]],
-  ["msmeSize",         "Enterprise size",            ["msme size", "enterprise size"]],
-  ["msmeAssetEvidence","MSME asset evidence",        ["msme asset evidence", "qualifying assets"]],
-  ["remedialStatus",   "Remedial status",            ["remedial status"]],
-  ["dosriApproval",    "DOSRI approval reference",   ["dosri approval", "approval reference"]],
-  ["managementOverlay","Management overlay",         ["management overlay", "overlay"]],
-  ["foreclosureImminent", "Foreclosure imminent (Y/N)", ["foreclosure imminent"]],
-  ["cureStartDate",    "Cure start date",            ["cure start date"]],
-  ["priorClass",       "Prior performance class",    ["prior class", "previous classification"]],
-  ["missedInstallments", "Missed installments",      ["number of missed installments", "missed installments"]],
-  ["officer",          "Loan officer",               ["loan officer", "assigned officer", "officer"]],
-  ["branch",           "Branch / booking office",    ["branch", "booking office"]]
-];
-const FIELD_MAP = (() => { const m = {}; for (const [f, lab, al] of FIELDS) for (const a of al) m[a] = f; return m; })();
-const FIELD_LABEL = Object.fromEntries(FIELDS.map(([f, lab]) => [f, lab]));
-const norm = h => String(h ?? "").trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
-function mapHeaders(headers) {
-  const map = {}, unmapped = [];
-  headers.forEach((h, i) => {
-    const n = norm(h);
-    let f = FIELD_MAP[n];
-    if (!f) { const hit = Object.keys(FIELD_MAP).find(k => n.startsWith(k) || k.startsWith(n)); if (hit && n.length > 5) f = FIELD_MAP[hit]; }
-    if (f && map[f] === undefined) map[f] = i; else unmapped.push({ header: h, index: i });
-  });
-  return { map, unmapped };
-}
+   FIELDS, FIELD_MAP, FIELD_LABEL, norm() and mapHeaders() used to be
+   defined here. They now live in shared/schema.js, loaded as a global
+   earlier in index.html (right after core.js), so the SAME rules also
+   run unmodified inside the backend pre-check at api/verify-import.js.
+   Do not redeclare them in this file — that would fork two copies of
+   "what counts as a recognised loan register" that can silently drift
+   apart. If the field list needs to change, change it in schema.js.
+   ==================================================================== */
 
 function rowsToAccounts(headers, rows, source) {
   const { map, unmapped } = mapHeaders(headers);
@@ -175,6 +90,58 @@ function rowsToAccounts(headers, rows, source) {
   });
   intake.imported = accounts.length;
   return { accounts, map, unmapped, intake };
+}
+
+/* ------------------------------------------------ backend structure pre-check
+   Calls api/verify-import.js before the real (client-side) import runs. It
+   sends the raw file bytes as base64 — nothing pre-parsed, nothing
+   summarised — and the endpoint itself never returns cell VALUES, only
+   sheet/header structure (see the comments in that file).
+
+   This never blocks an import on its own. It only ever does one of two
+   things:
+     - { available:true, recognised:true/false, reason }  the backend
+       answered in time; recognised:false means the endpoint agrees with
+       what importFile() would itself have rejected, just earlier and with
+       a friendlier message.
+     - { available:false }  offline, slow, or the endpoint errored — the
+       caller (handleFiles) falls back to running importFile() exactly as
+       it did before this existed. This is the expected, ordinary path for
+       an offline-first app, not a failure worth alarming the operator over. */
+const BACKEND_VERIFY_TIMEOUT_MS = 6000;
+const BACKEND_VERIFY_MAX_BYTES = 8 * 1024 * 1024;   // keep in step with api/verify-import.js's MAX_BYTES
+
+function bufToBase64(buf) {
+  const bytes = new Uint8Array(buf);
+  let bin = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  return btoa(bin);
+}
+
+async function backendVerify(file) {
+  if (location.protocol !== "http:" && location.protocol !== "https:") return { available: false };
+  if (file.size > BACKEND_VERIFY_MAX_BYTES) return { available: false };   // skip the round trip; importFile() will validate it directly
+  let buf;
+  try { buf = await file.arrayBuffer(); } catch (e) { return { available: false }; }
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), BACKEND_VERIFY_TIMEOUT_MS);
+  try {
+    const res = await fetch("/api/verify-import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename: file.name, dataBase64: bufToBase64(buf) }),
+      signal: ctrl.signal
+    });
+    if (!res.ok) return { available: false };
+    const j = await res.json();
+    if (!j || j.ok !== true) return { available: false };
+    return { available: true, recognised: !!j.recognised, reason: j.reason, bestSheet: j.bestSheet, missingKeyColumns: j.missingKeyColumns };
+  } catch (e) {
+    return { available: false };   // offline, timed out, CORS, DNS — all treated the same: fall back
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function importFile(file) {
