@@ -560,6 +560,11 @@ async function act(a, el) {
     case "reset-open": openReset(); break;
     case "clear-period-open": openClearPeriod(); break;
     case "backup-open": openBackupChoice(); break;
+    case "clean-workbook": {
+      const f = $("file");
+      await runCleanWorkbook(f && f.files ? f.files : null);
+      break;
+    }
     case "diagnose-file": {
       const f = $("file");
       await runDiagnostic(f && f.files ? f.files : null);
