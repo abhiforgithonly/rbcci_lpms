@@ -834,11 +834,12 @@ function vImport() {
         </div>
         <div class="drop" id="drop">
           <b>Drop an .xlsx or .csv file here</b>
-          <p class="mut sm" style="margin:6px 0 12px">Read entirely inside this browser. No file leaves the machine.</p>
+          <p class="mut sm" style="margin:6px 0 12px">The file is briefly sent to this app's own server for a structure check (sheet names and column headers only \u2014 nothing is stored there), then read and imported entirely inside this browser. If that check is unreachable (for example, no internet connection), the file is checked and imported locally instead, exactly as before.</p>
           <input type="file" id="file" accept=".xlsx,.xlsm,.csv,.txt" multiple>
-          <p class="mut sm" style="margin:12px 0 0">Trouble with a file? <button class="btn sm ghost" data-act="clean-workbook">Clean up this file</button> <button class="btn sm ghost" data-act="diagnose-file">Check the file</button><br>
-          <span class="mut sm"><b>Clean up</b> rebuilds the workbook without the empty formatted rows Excel leaves behind, making it far smaller and quicker to open. Importing works either way.<br></span>
-          <span class="mut sm">Choose the file above, then press this. It describes the file's structure so the problem can be found, and includes no borrower names, account numbers or balances.</span></p>
+          <p class="mut sm" style="margin:12px 0 0">Trouble with a file? <button class="btn sm gold" data-act="repair-file">Repair file</button> <button class="btn sm ghost" data-act="clean-workbook">Clean up this file</button> <button class="btn sm ghost" data-act="diagnose-file">Check the file</button><br>
+          <span class="mut sm"><b>Repair file</b> checks the file's structure and, if something's wrong, asks an AI assistant to explain the problem and suggest which columns likely match. This sends column header labels (never account numbers, balances or names) to an outside AI service and needs an internet connection \u2014 it never changes the file itself, it only suggests what to fix.<br></span>
+          <span class="mut sm"><b>Clean up</b> rebuilds the workbook without the empty formatted rows Excel leaves behind, making it far smaller and quicker to open. Importing works either way. Runs entirely in this browser, no internet needed.<br></span>
+          <span class="mut sm">Choose the file above, then press this. It describes the file's structure so the problem can be found, and includes no borrower names, account numbers or balances. Runs entirely in this browser, no internet needed.</span></p>
         </div>
         <div class="bar" style="margin-top:12px"><button class="btn sec" data-act="load-sample">Load sample loan book</button><button class="btn ghost" data-act="backup-open">Download a copy</button><button class="btn bad" data-act="clear-period-open">Clear period ${E(periodKey())}</button></div>
         <p class="mut sm" style="margin:8px 0 0">Clearing resets every period-dependent value — register, dashboard, ACL, AFRD, validation and staging data — so a new import cannot inherit stale figures. Parameters, users, templates and the audit trail are retained.</p>
