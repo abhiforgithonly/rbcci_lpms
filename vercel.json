@@ -32,6 +32,9 @@
   "functions": {
     "api/verify-import.js": {
       "maxDuration": 15
+    },
+    "api/suggest-mapping.js": {
+      "maxDuration": 30
     }
   }
 }
