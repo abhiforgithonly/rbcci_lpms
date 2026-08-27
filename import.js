@@ -820,6 +820,73 @@ async function cleanWorkbook(file) {
            originalSize: file.size, cleanSize: blob.size };
 }
 
+/* ==================================================================== */
+/*  "Repair file" \u2014 explicit entry point                                */
+/*                                                                      */
+/*  The backend pre-check and AI suggestions already run automatically   */
+/*  the moment an import is rejected (see handleFiles() in events.js).   */
+/*  This is the same check and the same suggestions, reachable on        */
+/*  demand instead of only after a failed import \u2014 useful when someone  */
+/*  wants to check a file before committing to importing it, or wants to  */
+/*  see the AI's explanation again without re-triggering an import.       */
+/*                                                                      */
+/*  Unlike Clean up / Check the file (which run entirely in this browser */
+/*  and never contact anything), this DOES send data off the machine:    */
+/*  the raw file bytes go to this app's own backend for the structure    */
+/*  check, and if a problem is found, column HEADER LABELS ONLY (never   */
+/*  any data row) go on to an AI service (Claude, via OpenRouter) for    */
+/*  the explanation and suggestions. Both facts are stated in the modal  */
+/*  itself, not just in a comment here \u2014 the person clicking the button */
+/*  should not have to read source code to know what just happened.      */
+/* ==================================================================== */
+async function runRepairFile(files) {
+  if (!files || !files.length) { toast("Choose a file first, then press this.", "err"); return; }
+  const file = files[0];
+
+  if (location.protocol !== "http:" && location.protocol !== "https:") {
+    toast("Repair needs an internet connection. Use \u201cCheck the file\u201d instead \u2014 that works offline.", "err");
+    return;
+  }
+
+  importStage("Checking " + file.name, file.name);
+  await new Promise(r => setTimeout(r, 0));
+  const pre = await backendVerify(file);
+  importDone();
+
+  if (!pre.available) {
+    $("modalBody").innerHTML = `
+      <h2 style="margin:0 0 6px;font-size:18px">Repair unavailable right now</h2>
+      <p class="sm">Could not reach the repair service for ${E(file.name)} \u2014 this usually just means no internet connection at the moment. Try \u201cCheck the file\u201d instead, which works offline and never leaves this browser.</p>
+      <div class="bar" style="margin-top:12px"><button class="btn ghost" id="rpClose">Close</button></div>`;
+    $("modal").classList.add("on");
+    $("rpClose").onclick = () => $("modal").classList.remove("on");
+    return;
+  }
+
+  if (pre.recognised) {
+    $("modalBody").innerHTML = `
+      <h2 style="margin:0 0 6px;font-size:18px">No problem found</h2>
+      <p class="sm">${E(file.name)} looks like a recognised loan register${pre.bestSheet ? " \u2014 sheet \u201c" + E(pre.bestSheet.name) + "\u201d, " + CNT(pre.bestSheet.mappedColumns) + " column(s) matched" : ""}. It's ready to import as-is.</p>
+      <p class="mut sm">Checked by sending the file to this app's own server, which only reads sheet names and column headers \u2014 never account numbers, balances or borrower names.</p>
+      <div class="bar" style="margin-top:12px"><button class="btn ghost" id="rpClose">Close</button><button class="btn" id="rpImport">Import this file now</button></div>`;
+    $("modal").classList.add("on");
+    $("rpClose").onclick = () => $("modal").classList.remove("on");
+    $("rpImport").onclick = () => { $("modal").classList.remove("on"); handleFiles([file]); };
+    return;
+  }
+
+  toast(file.name + ": " + (pre.reason || "no recognised loan register was found") + ". Asking AI for suggestions\u2026", "err");
+  const help = await requestMappingSuggestions(file);
+  if (help) { openMappingSuggestions(file.name, help); return; }
+  $("modalBody").innerHTML = `
+    <h2 style="margin:0 0 6px;font-size:18px">${E(file.name)} was not recognised</h2>
+    <p class="sm">${E(pre.reason || "No sheet matched a recognised loan register.")}</p>
+    <p class="mut sm">The AI suggestion step could not run just now (it may need OPENROUTER_API_KEY configured on the server, or the AI service may be temporarily unavailable). Try \u201cCheck the file\u201d for a structural description you can review yourself, or contact whoever manages Administration.</p>
+    <div class="bar" style="margin-top:12px"><button class="btn ghost" id="rpClose">Close</button></div>`;
+  $("modal").classList.add("on");
+  $("rpClose").onclick = () => $("modal").classList.remove("on");
+}
+
 async function runCleanWorkbook(files) {
   if (!files || !files.length) { toast("Choose a file first, then press this.", "err"); return; }
   const file = files[0];
