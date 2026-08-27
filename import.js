@@ -144,6 +144,68 @@ async function backendVerify(file) {
   }
 }
 
+/* ------------------------------------------------ AI mapping suggestions
+   Called automatically after backendVerify() reports a workbook as not
+   recognised. Re-reads the file client-side (same Xlsx.read already used
+   everywhere else) to pull out HEADER LABELS ONLY for the most plausible
+   sheets — no data row is ever included — and asks api/suggest-mapping.js
+   for a plain-language explanation and suggested column mappings.
+
+   This never applies anything by itself. It only returns text for a human
+   to read; applying a mapping still goes through the normal import screen.
+   If it fails for any reason (offline, no API key configured, OpenRouter
+   error, timeout) it fails silently — the operator just doesn't see a
+   suggestions panel, nothing else about the import flow changes. */
+const MAPPING_SUGGEST_TIMEOUT_MS = 20000;
+const MAPPING_SUGGEST_MAX_SHEETS = 3;
+const MAPPING_SUGGEST_HEADER_ROW_DEPTH = 6;
+
+async function extractHeaderStructure(file) {
+  const ext = file.name.split(".").pop().toLowerCase();
+  const buf = await file.arrayBuffer();
+  let sheets = [];
+  if (ext === "xlsx" || ext === "xlsm") sheets = await Xlsx.read(buf);
+  else if (ext === "csv" || ext === "txt") sheets = [{ name: file.name.replace(/\.[^.]+$/, ""), rows: parseCsv(new TextDecoder().decode(buf)) }];
+  else return [];
+
+  const ranked = [];
+  sheets.forEach(sh => {
+    if (!sh.rows.length) return;
+    for (let hr = 0; hr < Math.min(MAPPING_SUGGEST_HEADER_ROW_DEPTH, sh.rows.length); hr++) {
+      const headers = sh.rows[hr].map(String);
+      const { map, unmapped } = mapHeaders(headers);
+      ranked.push({ name: sh.name, headerRow: hr, score: scoreMapping(map),
+        headers, unmapped: unmapped.map(u => u.header) });
+    }
+  });
+  ranked.sort((a, b) => b.score - a.score);
+  /* De-duplicate by sheet, keeping each sheet's best-scoring header row. */
+  const bySheet = new Map();
+  ranked.forEach(r => { if (!bySheet.has(r.name)) bySheet.set(r.name, r); });
+  return [...bySheet.values()].slice(0, MAPPING_SUGGEST_MAX_SHEETS);
+}
+
+async function requestMappingSuggestions(file) {
+  try {
+    const structure = await extractHeaderStructure(file);
+    if (!structure.length) return null;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), MAPPING_SUGGEST_TIMEOUT_MS);
+    try {
+      const res = await fetch("/api/suggest-mapping", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: file.name, sheets: structure }),
+        signal: ctrl.signal
+      });
+      if (!res.ok) return null;
+      const j = await res.json();
+      if (!j || j.ok !== true) return null;
+      return j;   // { explanation, suggestions[] }
+    } finally { clearTimeout(timer); }
+  } catch (e) { return null; }
+}
+
 async function importFile(file) {
   const name = file.name, ext = name.split(".").pop().toLowerCase();
   const buf = await file.arrayBuffer();
