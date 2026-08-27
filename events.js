@@ -579,17 +579,35 @@ async function act(a, el) {
     case "backup-open": openBackupChoice(); break;
     case "clean-workbook": {
       const f = $("file");
-      await runCleanWorkbook(f && f.files ? f.files : null);
+      if (f && f.files && f.files.length) { await runCleanWorkbook(f.files); break; }
+      if (f) {
+        const onPick = async () => { f.removeEventListener("change", onPick); if (f.files && f.files.length) await runCleanWorkbook(f.files); };
+        f.addEventListener("change", onPick);
+        f.click();
+      }
       break;
     }
     case "diagnose-file": {
       const f = $("file");
-      await runDiagnostic(f && f.files ? f.files : null);
+      if (f && f.files && f.files.length) { await runDiagnostic(f.files); break; }
+      if (f) {
+        const onPick = async () => { f.removeEventListener("change", onPick); if (f.files && f.files.length) await runDiagnostic(f.files); };
+        f.addEventListener("change", onPick);
+        f.click();
+      }
       break;
     }
     case "repair-file": {
       const f = $("file");
-      await runRepairFile(f && f.files ? f.files : null);
+      if (f && f.files && f.files.length) { await runRepairFile(f.files); break; }
+      /* No file chosen yet: open the picker ourselves rather than just
+         telling the operator to use "Choose File" first. Non-technical
+         users read "choose a file first" as an error, not an instruction. */
+      if (f) {
+        const onPick = async () => { f.removeEventListener("change", onPick); if (f.files && f.files.length) await runRepairFile(f.files); };
+        f.addEventListener("change", onPick);
+        f.click();
+      }
       break;
     }
     case "sec-tab": S.securityTab = el.dataset.code; render(); break;
