@@ -149,7 +149,9 @@ async function handleFiles(files) {
       const pre = await backendVerify(file);
       if (pre.available && !pre.recognised) {
         importDone();
-        toast(file.name + ": " + (pre.reason || "no recognised loan register was found") + ".", "err");
+        toast(file.name + ": " + (pre.reason || "no recognised loan register was found") + ". Checking for suggestions\u2026", "err");
+        const help = await requestMappingSuggestions(file);
+        if (help) openMappingSuggestions(file.name, help);
         continue;
       }
       if (pre.available) {
@@ -637,6 +639,28 @@ function clearPeriodData() {
    for: a workbook to read and file, and a restore file the application can
    read back. The workbook is offered first because that is what is wanted
    nine times out of ten. */
+function openMappingSuggestions(filename, help) {
+  const rows = (help.suggestions || []).map(s => `
+    <tr>
+      <td>${E(s.sheet || "")}</td>
+      <td>${E(s.header || "")}</td>
+      <td>${s.suggestedFieldLabel ? E(s.suggestedFieldLabel) : "<span class=\"mut\">no clear match</span>"}</td>
+      <td><span class="tag ${s.confidence === "high" ? "t-ok" : s.confidence === "medium" ? "t-warn" : "t-mute"}">${E(s.confidence || "-")}</span></td>
+      <td class="mut sm">${E(s.note || "")}</td>
+    </tr>`).join("");
+  $("modalBody").innerHTML = `
+    <h2 style="margin:0 0 6px;font-size:18px">AI suggestions for ${E(filename)}</h2>
+    <p class="mut sm">Generated from column header labels only \u2014 no loan data was sent. These are suggestions for you to review; nothing has been changed. Apply any mapping you agree with from the normal column-mapping screen.</p>
+    <div class="note" style="margin-top:10px">${E(help.explanation || "No explanation returned.")}</div>
+    ${rows ? `<div class="tw" style="margin-top:10px"><table>
+      <thead><tr><th>Sheet</th><th>Header</th><th>Suggested field</th><th>Confidence</th><th>Note</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>` : `<p class="mut sm">No column suggestions were returned.</p>`}
+    <div class="bar" style="margin-top:12px"><button class="btn ghost" id="mapSuggClose">Close</button></div>`;
+  $("modal").classList.add("on");
+  $("mapSuggClose").onclick = () => $("modal").classList.remove("on");
+}
+
 function openBackupChoice() {
   $("modalBody").innerHTML = `
     <h2 style="margin:0 0 6px;font-size:18px">Download a copy of this period</h2>
@@ -1343,6 +1367,33 @@ async function boot() {
   ["click", "keydown", "touchstart"].forEach(ev => document.addEventListener(ev, resetIdleTimer, { passive: true }));
   if (restoreSession()) { finishBoot(); return; }
   showLogin();
+  checkBackendHealth();   // fire-and-forget; see function for why
+}
+
+/* ------------------------------------------------ backend health (quiet)
+   Separate from checkModules() on purpose: checkModules() is synchronous,
+   offline-safe, and blocking — the right shape for "did our own files
+   load". This one needs a network call, so it must NEVER block boot or
+   show a full-page error, because being offline is this app's normal
+   state, not a failure. It only ever logs a quiet audit entry, and only
+   when there's something actually worth telling an administrator (the
+   backend is reachable but the OpenRouter key isn't configured) — being
+   offline, or the backend simply not being deployed yet, produces no
+   entry at all, so the audit trail doesn't fill up with "offline" noise
+   on every ordinary login. */
+async function checkBackendHealth() {
+  if (location.protocol !== "http:" && location.protocol !== "https:") return;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 4000);
+  try {
+    const res = await fetch("/api/health", { signal: ctrl.signal });
+    if (!res.ok) return;
+    const j = await res.json();
+    if (j && j.ok && j.openRouterConfigured === false) {
+      audit("Backend reachable but AI mapping suggestions are not configured", "OPENROUTER_API_KEY is not set on the server");
+    }
+  } catch (e) { /* offline, or not deployed yet — not worth an audit entry */ }
+  finally { clearTimeout(timer); }
 }
 
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
