@@ -587,6 +587,11 @@ async function act(a, el) {
       await runDiagnostic(f && f.files ? f.files : null);
       break;
     }
+    case "repair-file": {
+      const f = $("file");
+      await runRepairFile(f && f.files ? f.files : null);
+      break;
+    }
     case "sec-tab": S.securityTab = el.dataset.code; render(); break;
     case "goto-import": go("import"); break;
   }
